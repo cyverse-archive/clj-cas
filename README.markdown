@@ -30,7 +30,12 @@ server, which is a base URL that the CAS server can use to connect to the
 service.
 
 When a request arrives, the CAS proxy ticket should be included in the
-`proxyToken` query string parameter of the request URL.
+`proxyToken` query string parameter of the request URL.  The ticket validation
+function extracts the ticket from the query parameters contacts the CAS server
+to verify that the ticket is valid.  If the ticket is not valid or not
+provided then a 401 status will be returned.  If the ticket _is_ valid then
+any attributes will be extracted from the CAS assertion and associated with
+the request using the `:user-attributes` key.
 
 Here's a more complete example of a Ring application with one unsecured
 endpoint at `/public` and one secured endpoint at `/secured/private`.  This
@@ -70,7 +75,167 @@ listening to port 2112.
 (def app (site-handler all-routes))
 ```
 
+### Extracting Group Membership Information
+
+After a CAS proxy ticket has been validated and the user attributes have been
+associated with the request, the group membership information can be extracted
+from the attributes using `extract-groups-from-user-attributes`.
+
+```clojure
+; When used within the primary Ring handler.
+(defn site-handler [routes]
+  (-> routes
+      (extract-groups-from-user-attributes attr-name-fn)
+      (validate-cas-proxy-ticket cas-server-fn server-name-fn)
+      wrap-keyword-params
+      wrap-nested-params
+      wrap-query-params))
+
+; When used for a context within unsecured routes.
+(defroutes my-routes
+  ; ...
+  (context "/secured" []
+    (-> secured-routes
+        (extract-groups-from-user-attributes attr-name-fn)
+        (validate-cas-proxy-ticket cas-server-fn server-name-fn))))
+```
+
+The first argument to `extract-groups-from-user-attributes` is the Ring
+handler that will eventually handle the request.  The second argument is a
+function that returns the name of the user attribute that contains the user's
+group membership information.The value of this attribute should be a
+comma-and-whitespace delimited string surrounded by square brackets.  For
+example, `[foo, bar, baz]`.  Assuming the proxy ticket is validated and the
+user's group information is successfully extracted.  The list of groups that
+the user belongs to will be stored in the request using the `:user-groups`
+key.
+
+Here's an extended version of the complete example from
+`validate-cas-group-membership` that also extracts the user's group
+information.
+
+```clojure
+(defn cas-server []
+  "https://by-tor.example.org/cas/")
+
+(defn server-name []
+  "http://snow-dog.example.org:2112")
+
+(defn group-attr-name []
+  "entitlement")
+
+(defroutes secured-routes
+  (GET "/private" []
+    "This is private information")
+
+  (route/not-found "Not found."))
+
+(defroutes all-routes
+  (GET "/public" []
+    "This is public information.")
+
+  (context "/secured" []
+    (-> secured-routes
+        (extract-groups-from-user-attributes group-attr-name)
+        (validate-cas-proxy-ticket cas-server server-name)))
+
+  (route/not-found "Not found."))
+
+(defn site-handler [routes]
+  (-> routes
+      wrap-keyword-params
+      wrap-nested-params
+      wrap-query-params))
+
+(def app (site-handler all-routes))
+```
+
+### Verifying Group Membership
+
+Once the group membership information has been extracted and stored in the
+request, it's possible to verify that the user belongs to one of the groups
+that are permitted to access a resource using `validate-group-membership`.
+
+```clojure
+; When used within the primary Ring handler.
+(defn site-handler [routes]
+  (-> routes
+      (validate-group-membership allowed-groups-fn)
+      (extract-groups-from-user-attributes group-attr-name-fn)
+      (validate-cas-proxy-ticket cas-server-fn server-name-fn)
+      wrap-keyword-params
+      wrap-nested-params
+      wrap-query-params))
+
+; When used for a context within unsecured routes.
+(defroutes my-routes
+  ; ...
+  (context "/secured" []
+    (-> secured-routes
+        (validate-group-membership allowed-groups-fn)
+        (extract-groups-from-user-attributes group-attr-name-fn)
+        (validate-cas-proxy-ticket cas-server-fn server-namefn))))
+```
+
+Once again, the first argument to `validate-group-membership` is a Ring
+handler that will continue handling the request if group membership validation
+succeeds.  The second argument is a function that returns a vector containing
+the names of the groups that are permitted to access the resource.
+
+When a request is processed, the handler verifies that the user actually
+belongs to a group that is permitted to access the resource.  If the user does
+not belong to one of these groups then a 401 status is returned.  Otherwise,
+the request is passed to the next handler.
+
+Here's a complete example that is identical to the one for
+`extract-groups-from-user-attributes` that prevents anyone who is not in the
+`admin` group from accessing the private resource.
+
+```clojure
+(defn cas-server []
+  "https://by-tor.example.org/cas/")
+
+(defn server-name []
+  "http://snow-dog.example.org:2112")
+
+(defn group-attr-name []
+  "entitlement")
+
+(defn allowed-groups []
+  ["admin"])
+
+(defroutes secured-routes
+  (GET "/private" []
+    "This is private information")
+
+  (route/not-found "Not found."))
+
+(defroutes all-routes
+  (GET "/public" []
+    "This is public information.")
+
+  (context "/secured" []
+    (-> secured-routes
+        (validate-group-membership allowed-groups)
+        (extract-groups-from-user-attributes group-attr-name)
+        (validate-cas-proxy-ticket cas-server server-name)))
+
+  (route/not-found "Not found."))
+
+(defn site-handler [routes]
+  (-> routes
+      wrap-keyword-params
+      wrap-nested-params
+      wrap-query-params))
+
+(def app (site-handler all-routes))
+```
+
 ### Ticket Validation with Group Membership Verification
+
+The last function, `validate-cas-group-membership` is a convenience function
+that wraps CAS proxy ticket validation, group membership information
+extraction, and group membership verification into one Ring handler.
 
 ```clojure
 ; When used within the primary Ring handler.
@@ -91,16 +256,12 @@ listening to port 2112.
 ```
 
 The first three arguments `validate-cas-group-membership` are identical to
-those of `validate-cas-proxy-ticket`.  The fourth argument is a function that
-returns the name of the CAS user attribute that contains the group membership
-information for the authenticated user.  The value of this attribute should be
-a comma-and-whitespace delimited string surrounded by square brackets.  For
-example, `[foo, bar, baz]`.  The last argument is a function that returns the
-list of groups that are allowed to access the resource.
+those of `validate-cas-proxy-ticket`.  The fourth argument is identical to the
+second argument of `extract-groups-from-user-attributes`.  The last argument
+is identical to the second argument to `validate-group-membership`.
 
-Here's a more complete example that is identical to the example for ticket
-validation only except that the secured endpoint can only be accessed by
-members of the `admin` group.
+The behavior of the following example is identical to the example for
+`validate-group-membership`.
 
 ```clojure
 (defn cas-server []
