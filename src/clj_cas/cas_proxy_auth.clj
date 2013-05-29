@@ -76,22 +76,38 @@
           {:status 401}
           (handler (assoc-attrs request (.getPrincipal assertion))))))))
 
-(defn validate-cas-proxy-ticket-multipart
-  "Authenticates a CAS proxy ticket that has been sent to the service in a
-   query string parameter called 'proxyToken'. If the proxy ticket can be
-   validated then the request is passed to the handler. Otherwise, the
-   handler responds with HTTP status code 401. If (predicate? request) returns
-   false or skip? is true, then the cas validation is skipped."
-  [handler predicate? skip? cas-server-fn server-name-fn]
+(defn wrap-cas-auth
+  [handler bypass-uris skip? cas-server-fn server-name-fn]
   (fn [request]
-    (if (and (predicate? request) (not skip?)) 
-      (let [ticket (get (:query-params request) "proxyToken")]
-        (log/debug (str "validating proxy ticket: " ticket))
-        (let [assertion (get-assertion ticket (cas-server-fn) (server-name-fn))]
-          (if (nil? assertion)
-            {:status 401}
-            (handler (assoc-attrs request (.getPrincipal assertion))))))
-      (handler request))))
+    (let [ticket (get (:query-params request) "proxyToken")
+          uri (:uri request)]
+        (cond
+          (and ticket (not skip?))
+          (let [assertion (get-assertion ticket (cas-server-fn) (server-name-fn))]
+            (if (nil? assertion)
+              {:status 401}
+              (handler (assoc-attrs request (.getPrincipal assertion)))))
+          
+          (and (not ticket) (not skip?))
+          {:status 401}
+          
+          (and ticket skip? (contains? bypass-uris uri))
+          (handler request)
+          
+          (and ticket skip? (not (contains? bypass-uris uri)))
+          (handler request)
+          
+          (and (not ticket) skip? (contains? bypass-uris uri))
+          (handler request)
+          
+          (and (not ticket) skip? (not (contains? bypass-uris uri)))
+          {:status 401}
+          
+          (and (not ticket) skip?)
+          {:status 401}
+          
+          :else 
+          {:status 401}))))
 
 (defn validate-cas-group-membership
   "This is a convenience function that produces a handler that validates a
