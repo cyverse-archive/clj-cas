@@ -76,11 +76,22 @@
           {:status 401}
           (handler (assoc-attrs request (.getPrincipal assertion))))))))
 
+(defn bypass?
+  [uri bypass-uris]
+  (reduce #(or %1 (.startsWith uri %2)) false (seq bypass-uris)))
+
 (defn wrap-cas-auth
+  "Ring middleware for authentication a CAS proxy ticket.
+   Parameters:
+       handler - The next Ring handler.
+       bypass-uris - A set of URIs that are allowed to bypass CAS auth.
+       skip? - Tells the handler to skip over the actual CAS auth. Useful for debugging.
+       cas-server-fn - Function that returns the hostname of the CAS server.
+       server-name-fn - Function that returns the name of the server."
   [handler bypass-uris skip? cas-server-fn server-name-fn]
   (fn [request]
     (let [ticket (get (:query-params request) "proxyToken")
-          uri (:uri request)]
+          uri    (:uri request)]
         (cond
           (and ticket (not skip?))
           (let [assertion (get-assertion ticket (cas-server-fn) (server-name-fn))]
@@ -91,16 +102,16 @@
           (and (not ticket) (not skip?))
           {:status 401}
           
-          (and ticket skip? (contains? bypass-uris uri))
+          (and ticket skip? (bypass? uri bypass-uris))
           (handler request)
           
-          (and ticket skip? (not (contains? bypass-uris uri)))
+          (and ticket skip? (not (bypass? uri bypass-uris)))
           (handler request)
           
-          (and (not ticket) skip? (contains? bypass-uris uri))
+          (and (not ticket) skip? (bypass? uri bypass-uris))
           (handler request)
           
-          (and (not ticket) skip? (not (contains? bypass-uris uri)))
+          (and (not ticket) skip? (not (bypass? uri bypass-uris)))
           {:status 401}
           
           (and (not ticket) skip?)
