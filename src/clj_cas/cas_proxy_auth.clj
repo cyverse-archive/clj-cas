@@ -3,18 +3,19 @@
   (:require [clojure.tools.logging :as log])
   (:import [org.jasig.cas.client.validation Cas20ProxyTicketValidator TicketValidationException]))
 
+(defn- build-validator
+  "Builds the service ticket validator."
+  [cas-server]
+  (doto (Cas20ProxyTicketValidator. cas-server)
+    (.setAcceptAnyProxy true)))
+
 (defn- get-assertion
   "Gets a security assertion from the CAS server."
-  [proxy-ticket cas-server server-name]
-  (log/debug proxy-ticket)
-  (if (not (blank? proxy-ticket))
-    (let [validator (Cas20ProxyTicketValidator. cas-server)]
-      (.setAcceptAnyProxy validator true)
-      (try
-        (.validate validator proxy-ticket server-name)
-        (catch TicketValidationException e
-          (do (log/error e "proxy ticket validation failed") nil))))
-    nil))
+  [proxy-ticket validator server-name]
+  (when-not (blank? proxy-ticket)
+    (try (.validate validator proxy-ticket server-name)
+         (catch TicketValidationException e
+           (do (log/error e "proxy ticket validation failed") nil)))))
 
 (defn- build-attr-map
   "Builds a map containing the user's attributes"
@@ -67,13 +68,14 @@
    validated then the request is passed to the handler.  Otherwise, the
    handler responds with HTTP status code 401."
   [handler cas-server-fn server-name-fn]
-  (fn [request]
-    (let [ticket (get (:query-params request) "proxyToken")]
-      (log/debug (str "validating proxy ticket: " ticket))
-      (let [assertion (get-assertion ticket (cas-server-fn) (server-name-fn))]
-        (if (nil? assertion)
-          {:status 401}
-          (handler (assoc-attrs request (.getPrincipal assertion))))))))
+  (let [validator (delay (build-validator (cas-server-fn)))]
+    (fn [request]
+      (let [ticket (get (:query-params request) "proxyToken")]
+        (log/debug (str "validating proxy ticket: " ticket))
+        (let [assertion (get-assertion ticket @validator (server-name-fn))]
+          (if (nil? assertion)
+            {:status 401}
+            (handler (assoc-attrs request (.getPrincipal assertion)))))))))
 
 (defn validate-cas-group-membership
   "This is a convenience function that produces a handler that validates a
