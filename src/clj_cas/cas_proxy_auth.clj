@@ -1,8 +1,7 @@
 (ns clj-cas.cas-proxy-auth
   (:use [clojure.string :only (blank? split)])
   (:require [clojure.tools.logging :as log])
-  (:import [org.jasig.cas.client.validation Cas20ProxyTicketValidator
-            TicketValidationException]))
+  (:import [org.jasig.cas.client.validation Cas20ProxyTicketValidator TicketValidationException]))
 
 (defn- get-assertion
   "Gets a security assertion from the CAS server."
