@@ -1,13 +1,26 @@
 (ns clj-cas.cas-proxy-auth
   (:use [clojure.string :only (blank? split)])
-  (:require [clojure.tools.logging :as log])
-  (:import [org.jasig.cas.client.validation Cas20ProxyTicketValidator TicketValidationException]))
+  (:require [cemerick.url :as curl]
+            [clojure.tools.logging :as log])
+  (:import [org.jasig.cas.client.proxy ProxyGrantingTicketStorageImpl]
+           [org.jasig.cas.client.validation Cas20ProxyTicketValidator TicketValidationException]))
+
+(defn- build-pgt-storage
+  "Builds the object used to store proxy granting tickets."
+  [callback-url]
+  (when callback-url
+    (ProxyGrantingTicketStorageImpl.)))
 
 (defn- build-validator
   "Builds the service ticket validator."
-  [cas-server]
-  (doto (Cas20ProxyTicketValidator. cas-server)
-    (.setAcceptAnyProxy true)))
+  [cas-server callback-url  pgt-storage]
+  (when (and callback-url pgt-storage)
+    (doto (Cas20ProxyTicketValidator. cas-server)
+      (.setAcceptAnyProxy true)
+      (.setProxyCallbackUrl callback-url)
+      (.setProxyGrantingTicketStorage pgt-storage))
+    (doto (Cas20ProxyTicketValidator. cas-server)
+      (.setAcceptAnyProxy true))))
 
 (defn- get-assertion
   "Gets a security assertion from the CAS server."
@@ -22,7 +35,8 @@
   [principal]
   (assoc
     (into {} (.getAttributes principal))
-    "uid" (.getName principal)))
+    "uid"       (.getName principal)
+    "principal" principal))
 
 (defn- assoc-attrs
   "Associates user attributes from an assertion principal with a request."
@@ -62,28 +76,48 @@
       (log/debug "group membership attribute value: " attr-value)
       (handler (assoc request :user-groups (string->vector attr-value))))))
 
+(defn- handle-proxy-callback
+  [pgt-storage request]
+  (log/warn (with-out-str (clojure.pprint/pprint request))))
+
+(defn- handle-authentication
+  "Handles the authentication for a request."
+  [handler validator server-name request]
+  (let [ticket (get (:query-params request) "proxyToken")]
+    (log/debug (str "validating proxy ticket: " ticket))
+    (let [assertion (get-assertion ticket validator server-name)]
+      (if (nil? assertion)
+        {:status 401}
+        (handler (assoc-attrs request (.getPrincipal assertion)))))))
+
+(defn- build-url
+  [& components]
+  (when-not (some nil? components)
+    (str (apply curl/url components))))
+
 (defn validate-cas-proxy-ticket
   "Authenticates a CAS proxy ticket that has been sent to the service in a
    query string parameter called, proxyToken.  If the proxy ticket can be
    validated then the request is passed to the handler.  Otherwise, the
    handler responds with HTTP status code 401."
-  [handler cas-server-fn server-name-fn]
-  (let [validator (delay (build-validator (cas-server-fn)))]
+  [handler cas-server-fn server-name-fn & [proxy-callback-base-fn proxy-callback-path-fn]]
+  (let [callback-base-fn (or proxy-callback-base-fn (constantly nil))
+        callback-path-fn (or proxy-callback-path-fn (constantly nil))
+        callback-url-fn  #(build-url (callback-base-fn) (callback-path-fn))
+        pgt-storage      (delay (build-pgt-storage (callback-url-fn)))
+        validator        (delay (build-validator (cas-server-fn) (callback-url-fn) @pgt-storage))]
     (fn [request]
-      (let [ticket (get (:query-params request) "proxyToken")]
-        (log/debug (str "validating proxy ticket: " ticket))
-        (let [assertion (get-assertion ticket @validator (server-name-fn))]
-          (if (nil? assertion)
-            {:status 401}
-            (handler (assoc-attrs request (.getPrincipal assertion)))))))))
+      (if (= (callback-path-fn) (:uri request))
+        (handle-proxy-callback @pgt-storage request)
+        (handle-authentication handler @validator (server-name-fn) request)))))
 
 (defn validate-cas-group-membership
   "This is a convenience function that produces a handler that validates a
    CAS ticket, extracts the group membership information from a user
    attribute and verifies that the user belongs to one of the groups
    that are permitted to access the resource."
-  [handler cas-server-fn server-name-fn attr-name-fn allowed-groups-fn]
+  [handler cas-server-fn server-name-fn attr-name-fn allowed-groups-fn & [proxy-callback-url-fn]]
   (-> handler
     (validate-group-membership allowed-groups-fn)
     (extract-groups-from-user-attributes attr-name-fn)
-    (validate-cas-proxy-ticket cas-server-fn server-name-fn)))
+    (validate-cas-proxy-ticket cas-server-fn server-name-fn proxy-callback-url-fn)))
