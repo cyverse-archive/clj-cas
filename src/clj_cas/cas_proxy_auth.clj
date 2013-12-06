@@ -13,8 +13,8 @@
 
 (defn- build-validator
   "Builds the service ticket validator."
-  [cas-server callback-url  pgt-storage]
-  (when (and callback-url pgt-storage)
+  [cas-server callback-url pgt-storage]
+  (if (and callback-url pgt-storage)
     (doto (Cas20ProxyTicketValidator. cas-server)
       (.setAcceptAnyProxy true)
       (.setProxyCallbackUrl callback-url)
@@ -76,9 +76,25 @@
       (log/debug "group membership attribute value: " attr-value)
       (handler (assoc request :user-groups (string->vector attr-value))))))
 
+(def ^:private proxy-success-response
+  (str "<?xml version=\"1.0\"?>"
+       "<casClient:proxySuccess xmlns:casClient=\"http://www.yale.edu/tp/casClient\" />"))
+
+(defn- store-pgt
+  [pgt-storage pgt-iou pgt-id]
+  (.save pgt-storage pgt-iou pgt-id)
+  {:status       200
+   :content-type "application/xml"
+   :body         proxy-success-response})
+
 (defn- handle-proxy-callback
   [pgt-storage request]
-  (log/warn (with-out-str (clojure.pprint/pprint request))))
+  (let [query-params (:query-params request)
+        pgt-iou      (query-params "pgtIou")
+        pgt-id       (query-params "pgtId")]
+    (if (and pgt-iou pgt-id)
+      (store-pgt pgt-storage pgt-iou pgt-id)
+      {:status 200})))
 
 (defn- handle-authentication
   "Handles the authentication for a request."
@@ -121,3 +137,18 @@
     (validate-group-membership allowed-groups-fn)
     (extract-groups-from-user-attributes attr-name-fn)
     (validate-cas-proxy-ticket cas-server-fn server-name-fn proxy-callback-url-fn)))
+
+(defn- extract-service-name
+  [url]
+  (str (assoc (curl/url url)
+         :username nil
+         :password nil
+         :path     nil
+         :query    nil
+         :anchor   nil)))
+
+(defn get-proxy-ticket
+  "Obtains a proxy ticket that can be used to authenticate to other CAS-secured services."
+  [principal url]
+  (when (and principal url)
+    (.getProxyTicketFor principal (str (extract-service-name url)))))
