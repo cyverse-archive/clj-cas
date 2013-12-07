@@ -143,7 +143,6 @@
   (str (assoc (curl/url url)
          :username nil
          :password nil
-         :path     nil
          :query    nil
          :anchor   nil)))
 
