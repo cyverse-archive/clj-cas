@@ -132,11 +132,13 @@
    CAS ticket, extracts the group membership information from a user
    attribute and verifies that the user belongs to one of the groups
    that are permitted to access the resource."
-  [handler cas-server-fn server-name-fn attr-name-fn allowed-groups-fn & [proxy-callback-url-fn]]
+  [handler cas-server-fn server-name-fn attr-name-fn allowed-groups-fn
+   & [proxy-callback-url-fn proxy-callback-path-fn]]
   (-> handler
     (validate-group-membership allowed-groups-fn)
     (extract-groups-from-user-attributes attr-name-fn)
-    (validate-cas-proxy-ticket cas-server-fn server-name-fn proxy-callback-url-fn)))
+    (validate-cas-proxy-ticket cas-server-fn server-name-fn proxy-callback-url-fn
+                               proxy-callback-path-fn)))
 
 (defn- extract-service-name
   [url]
