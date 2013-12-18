@@ -140,16 +140,8 @@
     (validate-cas-proxy-ticket cas-server-fn server-name-fn proxy-callback-url-fn
                                proxy-callback-path-fn)))
 
-(defn- extract-service-name
-  [url]
-  (str (assoc (curl/url url)
-         :username nil
-         :password nil
-         :query    nil
-         :anchor   nil)))
-
 (defn get-proxy-ticket
   "Obtains a proxy ticket that can be used to authenticate to other CAS-secured services."
   [principal url]
   (when (and principal url)
-    (.getProxyTicketFor principal (str (extract-service-name url)))))
+    (.getProxyTicketFor principal url)))
