@@ -1,6 +1,7 @@
 (ns clj-cas.cas-proxy-auth
   (:use [clojure.string :only (blank? split)])
   (:require [cemerick.url :as curl]
+            [clojure.string :as string]
             [clojure.tools.logging :as log])
   (:import [org.jasig.cas.client.proxy ProxyGrantingTicketStorageImpl]
            [org.jasig.cas.client.validation Cas20ProxyTicketValidator TicketValidationException]))
@@ -109,7 +110,7 @@
 (defn- build-url
   [& components]
   (when-not (some nil? components)
-    (str (apply curl/url components))))
+    (str (apply curl/url (map #(string/replace % #"^/|/$" "") components)))))
 
 (defn validate-cas-proxy-ticket
   "Authenticates a CAS proxy ticket that has been sent to the service in a
