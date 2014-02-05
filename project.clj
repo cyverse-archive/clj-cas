@@ -14,6 +14,6 @@
                  [org.jasig.cas.client/cas-client-core "3.2.0"
                   :exclusions [javax.servlet/servlet-api]]]
   :repositories [["sonatype-nexus-snapshots"
-                  {:url "https://oss.sonatype.org/content/repositories/snapshots"}]
-                 ["sonatype-nexus-staging"
-                  {:url "https://oss.sonatype.org/service/local/staging/deploy/maven2/"}]])
+                  {:url "https://oss.sonatype.org/content/repositories/snapshots"}]]
+  :deploy-repositories ["sonatype-nexus-staging"
+                        {:url "https://oss.sonatype.org/service/local/staging/deploy/maven2/"}])
