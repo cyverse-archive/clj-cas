@@ -15,5 +15,5 @@
                   :exclusions [javax.servlet/servlet-api]]]
   :repositories [["sonatype-nexus-snapshots"
                   {:url "https://oss.sonatype.org/content/repositories/snapshots"}]]
-  :deploy-repositories ["sonatype-nexus-staging"
-                        {:url "https://oss.sonatype.org/service/local/staging/deploy/maven2/"}])
+  :deploy-repositories [["sonatype-nexus-staging"
+                         {:url "https://oss.sonatype.org/service/local/staging/deploy/maven2/"}]])
