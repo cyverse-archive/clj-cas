@@ -1,5 +1,6 @@
 (ns clj-cas.cas-proxy-auth
-  (:use [clojure.string :only (blank? split)])
+  (:use [clojure.string :only [blank? split]]
+        [ring.util.response :only [redirect]])
   (:require [cemerick.url :as curl]
             [clojure.string :as string]
             [clojure.tools.logging :as log])
@@ -146,3 +147,21 @@
   [principal url]
   (when (and principal url)
     (.getProxyTicketFor principal url)))
+
+(defn- handle-redirect-authentication
+  "Handles the authentication for a request."
+  [handler validator server-name service-name request]
+  (let [ticket (or (get (:params request) "ticket") (get (:params request) :ticket))]
+    (log/warn (str "validating proxy ticket: " ticket))
+    (let [assertion (get-assertion ticket validator server-name)]
+      (if (nil? assertion)
+        (log/spy :warn (redirect (str (assoc (curl/url server-name "login") :query {:service service-name}))))
+        (handler (assoc-attrs request (.getPrincipal assertion)))))))
+
+(defn wrap-cas-auth
+  "Requires the user to authenticate with CAS before proceeding."
+  [handler cas-server-fn server-name-fn]
+  (let [validator (delay (build-validator (cas-server-fn) nil nil))]
+    (fn [request]
+      (log/spy :warn request)
+      (handle-redirect-authentication handler @validator (cas-server-fn) (server-name-fn) request))))
