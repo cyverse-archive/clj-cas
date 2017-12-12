@@ -5,7 +5,7 @@
             [clojure.string :as string]
             [clojure.tools.logging :as log])
   (:import [org.jasig.cas.client.proxy ProxyGrantingTicketStorageImpl]
-           [org.jasig.cas.client.validation Cas20ProxyTicketValidator TicketValidationException]))
+           [org.jasig.cas.client.validation Cas30ProxyTicketValidator TicketValidationException]))
 
 (defn- build-pgt-storage
   "Builds the object used to store proxy granting tickets."
@@ -17,11 +17,11 @@
   "Builds the service ticket validator."
   [cas-server callback-url pgt-storage]
   (if (and callback-url pgt-storage)
-    (doto (Cas20ProxyTicketValidator. cas-server)
+    (doto (Cas30ProxyTicketValidator. cas-server)
       (.setAcceptAnyProxy true)
       (.setProxyCallbackUrl callback-url)
       (.setProxyGrantingTicketStorage pgt-storage))
-    (doto (Cas20ProxyTicketValidator. cas-server)
+    (doto (Cas30ProxyTicketValidator. cas-server)
       (.setAcceptAnyProxy true))))
 
 (defn- get-assertion
@@ -150,12 +150,11 @@
 
 (defn- handle-redirect-authentication
   "Handles the authentication for a request."
-  [handler validator server-name service-name request]
-  (let [ticket (or (get (:params request) "ticket") (get (:params request) :ticket))]
-    (log/warn (str "validating proxy ticket: " ticket))
-    (let [assertion (get-assertion ticket validator server-name)]
+  [handler validator server-name service-name {:keys [params] :as request}]
+  (let [ticket (or (get params "ticket") (get params :ticket))]
+    (let [assertion (get-assertion ticket validator service-name)]
       (if (nil? assertion)
-        (log/spy :warn (redirect (str (assoc (curl/url server-name "login") :query {:service service-name}))))
+        (redirect (str (assoc (curl/url server-name "login") :query {:service service-name})))
         (handler (assoc-attrs request (.getPrincipal assertion)))))))
 
 (defn wrap-cas-auth
@@ -163,5 +162,4 @@
   [handler cas-server-fn server-name-fn]
   (let [validator (delay (build-validator (cas-server-fn) nil nil))]
     (fn [request]
-      (log/spy :warn request)
       (handle-redirect-authentication handler @validator (cas-server-fn) (server-name-fn) request))))
